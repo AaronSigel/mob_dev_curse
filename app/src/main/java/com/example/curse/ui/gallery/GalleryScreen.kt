@@ -32,6 +32,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -40,6 +41,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -95,6 +97,7 @@ fun GalleryScreen(
     val scope = rememberCoroutineScope()
     var items by remember { mutableStateOf<List<GalleryItem>>(emptyList()) }
     var selectedItem by remember { mutableStateOf<GalleryItem?>(null) }
+    var deleteConfirmItem by remember { mutableStateOf<GalleryItem?>(null) }
 
     if (!hasMediaPermission) {
         Box(
@@ -179,13 +182,38 @@ fun GalleryScreen(
                 initialIndex = selectedIndex,
                 onDismiss = { selectedItem = null },
                 onDelete = {
-                    when (val result = tryDeleteMedia(context.contentResolver, it.uri)) {
-                        is DeleteResult.Success -> {
-                            scope.launch { deleteGalleryItemByUri(context, it.uri) }
-                            selectedItem = null
-                            items = items.filterNot { i -> i.uri == it.uri }
+                    // Перед удалением уточняем действие у пользователя.
+                    deleteConfirmItem = it
+                }
+            )
+        }
+
+        // Системное подтверждение перед удалением (до запуска delete-запроса в MediaStore).
+        deleteConfirmItem?.let { item ->
+            AlertDialog(
+                onDismissRequest = { deleteConfirmItem = null },
+                title = { Text("Удалить медиа?") },
+                text = { Text("Вы уверены, что хотите удалить этот объект?") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            deleteConfirmItem = null
+                            when (val result = tryDeleteMedia(context.contentResolver, item.uri)) {
+                                is DeleteResult.Success -> {
+                                    scope.launch { deleteGalleryItemByUri(context, item.uri) }
+                                    selectedItem = null
+                                    items = items.filterNot { i -> i.uri == item.uri }
+                                }
+                                is DeleteResult.NeedPermission -> onRequestDeletePermission(result.intentSender, item.uri)
+                            }
                         }
-                        is DeleteResult.NeedPermission -> onRequestDeletePermission(result.intentSender, it.uri)
+                    ) {
+                        Text("Удалить")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { deleteConfirmItem = null }) {
+                        Text("Оставить")
                     }
                 }
             )

@@ -16,7 +16,6 @@ sealed class DeleteResult {
 
 /**
  * Пытается удалить медиа по URI.
- * Если требуется подтверждение пользователя, возвращает IntentSender для системного диалога.
  */
 fun tryDeleteMedia(contentResolver: ContentResolver, uri: Uri): DeleteResult {
     return try {
