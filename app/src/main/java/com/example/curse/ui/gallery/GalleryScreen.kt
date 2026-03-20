@@ -54,6 +54,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.asImageBitmap
@@ -321,7 +323,12 @@ private fun GalleryGridItem(
                     MediaType.VIDEO -> VideoThumbnail(
                         context = context,
                         uri = item.uri,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                rotationZ = item.videoPlaybackRotationDegrees.toFloat()
+                                transformOrigin = TransformOrigin(0.5f, 0.5f)
+                            }
                     )
                 }
                 Icon(
@@ -468,6 +475,10 @@ private fun SingleMediaView(
                 val videoModifier = Modifier
                     .fillMaxWidth(MEDIA_MAX_WIDTH_FRACTION)
                     .aspectRatio(displayInfo?.aspectRatio ?: (16f / 9f))
+                    .graphicsLayer {
+                        rotationZ = item.videoPlaybackRotationDegrees.toFloat()
+                        transformOrigin = TransformOrigin(0.5f, 0.5f)
+                    }
                 VideoPlayer(
                     uri = item.uri,
                     isActive = isActive,

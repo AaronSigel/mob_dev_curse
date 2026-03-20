@@ -10,5 +10,7 @@ data class GalleryItemEntity(
     val id: Long = 0,
     val uriString: String,
     val type: String,
-    val dateAdded: Long
+    val dateAdded: Long,
+    /** Доп. поворот при воспроизведении видео в галерее (0 или 180); фронтальная камера. */
+    val videoPlaybackRotationDegrees: Int = 0
 )

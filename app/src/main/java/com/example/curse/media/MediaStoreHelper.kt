@@ -23,7 +23,9 @@ data class GalleryItem(
     val id: Long,
     val uri: Uri,
     val type: MediaType,
-    val dateAdded: Long
+    val dateAdded: Long,
+    /** Доп. поворот при показе видео в приложении (градусы, обычно 0 или 180). */
+    val videoPlaybackRotationDegrees: Int = 0
 )
 
 enum class MediaType { PHOTO, VIDEO }
@@ -136,36 +138,55 @@ suspend fun setVideoPendingFalse(context: Context, uri: Uri) = withContext(Dispa
  */
 suspend fun loadGalleryItems(context: Context): List<GalleryItem> = withContext(Dispatchers.IO) {
     val dao = CurseApplication.getDatabase(context).galleryItemDao()
-    val cached = dao.getAll().map { entity ->
+    val oldEntities = dao.getAll()
+    val rotationByUri = oldEntities.associate { it.uriString to it.videoPlaybackRotationDegrees }
+    val cached = oldEntities.map { entity ->
         GalleryItem(
             id = entity.id,
             uri = Uri.parse(entity.uriString),
             type = if (entity.type == MediaType.PHOTO.name) MediaType.PHOTO else MediaType.VIDEO,
-            dateAdded = entity.dateAdded
+            dateAdded = entity.dateAdded,
+            videoPlaybackRotationDegrees = entity.videoPlaybackRotationDegrees
         )
     }
 
     val mediaStoreItems = runCatching { loadGalleryItemsFromMediaStoreUnsafe(context) }
         .getOrElse { return@withContext cached }
 
+    val merged = mediaStoreItems.map { item ->
+        item.copy(videoPlaybackRotationDegrees = rotationByUri[item.uri.toString()] ?: 0)
+    }
+
     dao.clearAll()
-    mediaStoreItems.forEach { item ->
+    merged.forEach { item ->
         dao.insert(
             GalleryItemEntity(
                 uriString = item.uri.toString(),
                 type = item.type.name,
-                dateAdded = item.dateAdded
+                dateAdded = item.dateAdded,
+                videoPlaybackRotationDegrees = item.videoPlaybackRotationDegrees
             )
         )
     }
-    mediaStoreItems
+    merged
 }
 
 /** Вставка записи в Room после сохранения фото/видео в MediaStore. */
-suspend fun insertGalleryItem(context: Context, uri: Uri, type: MediaType, dateAdded: Long) =
+suspend fun insertGalleryItem(
+    context: Context,
+    uri: Uri,
+    type: MediaType,
+    dateAdded: Long,
+    videoPlaybackRotationDegrees: Int = 0
+) =
     withContext(Dispatchers.IO) {
         CurseApplication.getDatabase(context).galleryItemDao().insert(
-            GalleryItemEntity(uriString = uri.toString(), type = type.name, dateAdded = dateAdded)
+            GalleryItemEntity(
+                uriString = uri.toString(),
+                type = type.name,
+                dateAdded = dateAdded,
+                videoPlaybackRotationDegrees = videoPlaybackRotationDegrees
+            )
         )
     }
 
