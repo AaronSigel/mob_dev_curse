@@ -45,9 +45,9 @@ APK (debug): `app/build/outputs/apk/debug/app-debug.apk`
 
 ## Ограничения по версиям Android / устройствам
 
-- **minSdk 24** (Android 7.0). На API &lt; 29 галерея загружает все изображения/видео из общего хранилища (без фильтра по папке «Curse»).
+- **minSdk 24** (Android 7.0). На API < 29 галерея загружает все изображения/видео из общего хранилища (без фильтра по папке «Curse»).
 - Для корректной работы нужна камера; автофокус не обязателен.
-- Переключение камеры во время записи: сегменты пишутся во **временные файлы в cache** (не в `Movies/Curse`), чтобы приложенческая галерея не подхватывала каждый фрагмент из MediaStore; после перепривязки камеры запись **автоматически продолжается**. По «Стоп» сегменты **склеиваются в один MP4** и **один раз** публикуются в MediaStore через Media3 Transformer. FFmpeg в проекте не подключается.
+- Переключение камеры во время записи: сегменты пишутся во **временные файлы в cache** (не публикуются в MediaStore до финала), чтобы системная галерея не подхватывала каждый фрагмент; после перепривязки камеры запись **автоматически продолжается**. По «Стоп» сегменты **склеиваются в один MP4** и **один раз** публикуются в MediaStore через Media3 Transformer. FFmpeg в проекте не подключается.
 
 ### Отладка записи видео (логи)
 
@@ -56,8 +56,10 @@ APK (debug): `app/build/outputs/apk/debug/app-debug.apk`
 ## Стек
 
 - Kotlin, Jetpack Compose, Material 3
-- CameraX (Preview, ImageCapture, VideoCapture/Recorder)
+- CameraX (Preview, ImageCapture) — экран «Фото»
+- `android.hardware.Camera` + `SurfaceView` + `MediaRecorder` — экран «Видео»
 - Navigation Compose, MediaStore API, Room (хранение списка галереи), Coil для превью
+- Media3: ExoPlayer/UI (воспроизведение) и Transformer (склейка сегментов)
 
 ## Зависимости и версии (что именно использовалось)
 
@@ -73,10 +75,10 @@ APK (debug): `app/build/outputs/apk/debug/app-debug.apk`
 
 - **Jetpack Compose BOM**: 2024.09.00 (UI, Material 3, tooling)
 - **Navigation Compose**: 2.7.7 (навигация между экранами)
-- **CameraX**: 1.3.1 (камера: превью/снимок/видео)
+- **CameraX**: 1.3.1 (камера: превью/снимок на экране «Фото»)
 - **Room**: 2.8.0 (локальный кэш списка галереи)
 - **Coil**: 2.5.0 (загрузка превью изображений по `content://` URI)
-- **Media3 (ExoPlayer)**: 1.5.1 (проигрывание видео в полноэкранном просмотре)
+- **Media3**: 1.5.1 (ExoPlayer/UI — проигрывание, Transformer — склейка сегментов; `media3-effect` подключён как часть стека Transformer)
 
 > Примечание: значения `compileSdk/targetSdk` задаются в `app/build.gradle.kts`. Сейчас это **35**; в комментарии к `targetSdk` оставлена подсказка, что для Android 16 можно увеличить до 36.
 
@@ -109,15 +111,16 @@ APK (debug): `app/build/outputs/apk/debug/app-debug.apk`
   - `imageCollectionUri()` и `setImagePendingFalse(...)`
   - `insertGalleryItem(...)`: запись в Room после сохранения
 
-### Экран «Видео» (CameraX Recorder + сессия + MediaStore)
+### Экран «Видео» (Camera API + MediaRecorder + сессия + MediaStore)
 
 - `app/src/main/java/com/example/curse/ui/video/VideoScreen.kt`
-  - `Recorder` + `VideoCapture.withOutput(recorder)`
-  - `FileOutputOptions` — сегменты сессии в каталог `cacheDir`, в публичную галерею не попадают до финала
+  - Превью через `SurfaceView` в `AndroidView`
+  - Запись сегментов через `MediaRecorder` во временный каталог `cacheDir` (`video_session_*`), в MediaStore до финала не публикуются
   - Таймер записи (корутина + `delay(1000)`)
-  - Сессия из нескольких сегментов при смене камеры с **автопродолжением** записи после rebind; по «Стоп» — одна публикация в MediaStore
+  - При смене камеры/остановке записи действие откладывается до минимальной длительности сегмента (защита от слишком коротких сегментов и ошибок `MediaRecorder.stop()`)
+  - Сессия из нескольких сегментов при смене камеры с **автопродолжением** записи после перепривязки превью; по «Стоп» — финализация в MediaStore
 - `app/src/main/java/com/example/curse/media/VideoSegmentMerge.kt`
-  - `finalizeSessionRecordingsToGallery` / `importVideoFileToGallery`: один сегмент импортируется напрямую, несколько сегментов сводятся в один MP4 через Media3 Transformer; фронтальные сегменты перед склейкой поворачиваются на 180°
+  - `finalizeSessionRecordingsToGallery` / `importVideoFileToGallery`: один сегмент импортируется напрямую, несколько сегментов сводятся в один MP4 через Media3 Transformer; при ошибке склейки — fallback импортом по сегментам
 - `app/src/main/java/com/example/curse/media/MediaStoreHelper.kt`
   - `createVideoContentValues(...)` и `setVideoPendingFalse(...)`
 
@@ -128,7 +131,7 @@ APK (debug): `app/build/outputs/apk/debug/app-debug.apk`
   - Превью фото: `Coil` (`AsyncImage(model = uri)`)
   - Превью видео: `loadThumbnail(...)` (API 29+) / `MediaStore.Video.Thumbnails` / `MediaMetadataRetriever`
   - Полноэкранный просмотр: `HorizontalPager`
-  - Видео‑плеер: `Media3 ExoPlayer` + `PlayerView` в `AndroidView`; для одиночного клипа с фронтальной камеры — доп. поворот 180° из Room (`videoPlaybackRotationDegrees`)
+  - Видео‑плеер: `Media3 ExoPlayer` + `PlayerView` в `AndroidView`; поддерживается доп. поворот через Room (`videoPlaybackRotationDegrees`, по умолчанию 0)
 - `app/src/main/java/com/example/curse/media/MediaStoreHelper.kt`
   - `loadGalleryItems(...)`: синхронизация с MediaStore с сохранением `videoPlaybackRotationDegrees` по URI
   - Фильтрация по подпапке приложения:
@@ -207,11 +210,12 @@ APK (debug): `app/build/outputs/apk/debug/app-debug.apk`
 ### Допущения
 
 - **Переключение камеры во время записи**: отрезки — локальные файлы в cache; в MediaStore попадает **один** итоговый ролик после «Стоп» (склейка через `VideoSegmentMerge`). Если склейка не удалась — fallback: каждый сегмент импортируется в MediaStore отдельно.
-- Галерея показывает только медиа из папок приложения (Pictures/Curse, Movies/Curse) на API 29+; на API &lt; 29 — все изображения из MediaStore (ограничение фильтрации по пути).
+- Галерея показывает только медиа из папок приложения (Pictures/Curse, Movies/Curse) на API 29+; на API < 29 — все изображения из MediaStore (ограничение фильтрации по пути).
 - Полноэкранный просмотр видео через `ExoPlayer` (Media3).
 
 ### Известные ограничения
 
+- Экран «Видео» использует устаревший Camera API (`android.hardware.Camera`) и `MediaRecorder`; на части устройств возможны различия в поддерживаемых профилях и поведении ориентации.
 - На части устройств переключение камеры во время записи может давать короткую задержку до появления превью с новой камеры.
 - Склейка сегментов зависит от совместимости H.264/AAC между фронтальной и основной камерой; при сбое см. fallback на отдельные файлы.
 - Для отображения галереи после съёмки нужно перейти на другой экран и снова открыть «Галерею» (обновление при переходе на вкладку реализовано).
